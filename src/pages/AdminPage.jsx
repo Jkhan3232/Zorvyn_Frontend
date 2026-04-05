@@ -9,7 +9,6 @@ import { RecordFormModal } from "../components/records/RecordFormModal.jsx";
 import { useAuth } from "../hooks/useAuth.js";
 import { useToast } from "../hooks/useToast.js";
 import { formatRole } from "../lib/format.js";
-import { registerUser } from "../services/authService.js";
 import { updateAdminProfile } from "../services/adminService.js";
 import { fetchOpenApiJson } from "../services/apiSchemaService.js";
 import {
@@ -19,13 +18,14 @@ import {
   updateRecord,
 } from "../services/recordsService.js";
 import {
+  createUserByAdmin,
   fetchUsers,
   updateUserRole,
   updateUserStatus,
   updateUserWithAdminPayload,
 } from "../services/usersService.js";
 
-const USER_ROLES = ["viewer", "analyst", "admin"];
+const CREATE_USER_ROLES = ["viewer", "analyst"];
 
 const CREATE_USER_INITIAL_FORM = {
   name: "",
@@ -112,27 +112,31 @@ function buildAdminProfilePayload(form, currentUser) {
 }
 
 function validateCreateUserForm(form) {
+  const fieldErrors = {};
   const trimmedName = form.name.trim();
   const trimmedEmail = form.email.trim().toLowerCase();
+  const trimmedRole = String(form.role || "")
+    .trim()
+    .toLowerCase();
   const passwordLength = form.password.length;
 
   if (trimmedName.length < 2 || trimmedName.length > 100) {
-    return "Name must be between 2 and 100 characters.";
+    fieldErrors.name = "Name must be between 2 and 100 characters.";
   }
 
   if (!isValidEmail(trimmedEmail)) {
-    return "Please enter a valid email address.";
+    fieldErrors.email = "Please enter a valid email address.";
   }
 
-  if (passwordLength < 6 || passwordLength > 50) {
-    return "Password must be between 6 and 50 characters.";
+  if (form.password && (passwordLength < 6 || passwordLength > 50)) {
+    fieldErrors.password = "Password must be between 6 and 50 characters.";
   }
 
-  if (!USER_ROLES.includes(form.role)) {
-    return "Role must be viewer, analyst, or admin.";
+  if (!CREATE_USER_ROLES.includes(trimmedRole)) {
+    fieldErrors.role = "Role must be viewer or analyst.";
   }
 
-  return "";
+  return fieldErrors;
 }
 
 export function AdminPage() {
@@ -162,6 +166,7 @@ export function AdminPage() {
   const [createUserForm, setCreateUserForm] = useState(
     CREATE_USER_INITIAL_FORM,
   );
+  const [createUserFieldErrors, setCreateUserFieldErrors] = useState({});
   const [createUserError, setCreateUserError] = useState("");
   const [createUserSubmitting, setCreateUserSubmitting] = useState(false);
 
@@ -418,93 +423,64 @@ export function AdminPage() {
 
   function resetCreateUserForm() {
     setCreateUserForm(CREATE_USER_INITIAL_FORM);
+    setCreateUserFieldErrors({});
     setCreateUserError("");
-  }
-
-  async function resolveCreatedUserId(registerResult, email) {
-    const candidates = [
-      registerResult?.user,
-      registerResult?.data?.user,
-      registerResult?.data,
-      registerResult,
-    ];
-
-    for (const candidate of candidates) {
-      const userId = getEntityId(candidate);
-      if (userId) {
-        return userId;
-      }
-    }
-
-    const latestUsers = await fetchUsers();
-    setUsers(latestUsers);
-
-    const matchedUser = latestUsers.find((user) => {
-      return String(user?.email || "").toLowerCase() === email;
-    });
-
-    return getEntityId(matchedUser);
   }
 
   async function handleCreateUserSubmit(event) {
     event.preventDefault();
-    const validationError = validateCreateUserForm(createUserForm);
+    const validationErrors = validateCreateUserForm(createUserForm);
 
-    if (validationError) {
-      setCreateUserError(validationError);
+    if (Object.keys(validationErrors).length) {
+      setCreateUserFieldErrors(validationErrors);
+      setCreateUserError("");
       return;
     }
 
     setCreateUserError("");
+    setCreateUserFieldErrors({});
     setCreateUserSubmitting(true);
+
+    const normalizedRole = String(createUserForm.role || "")
+      .trim()
+      .toLowerCase();
 
     const payload = {
       name: createUserForm.name.trim(),
       email: createUserForm.email.trim().toLowerCase(),
-      password: createUserForm.password,
+      role: normalizedRole,
+      isActive: Boolean(createUserForm.isActive),
     };
 
+    if (createUserForm.password) {
+      payload.password = createUserForm.password;
+    }
+
     try {
-      const registerResult = await registerUser(payload);
-
-      const shouldUpdateRole = createUserForm.role !== "viewer";
-      const shouldDeactivate = !createUserForm.isActive;
-      const needsAdditionalUpdate = shouldUpdateRole || shouldDeactivate;
-
-      if (needsAdditionalUpdate) {
-        const userId = await resolveCreatedUserId(
-          registerResult,
-          payload.email,
-        );
-
-        if (!userId) {
-          await loadUsers();
-          resetCreateUserForm();
-          toast.info(
-            "User created. Role/status update could not auto-complete, please update from user list.",
-          );
-          return;
-        }
-
-        if (shouldUpdateRole) {
-          await updateUserRole(userId, createUserForm.role);
-        }
-
-        if (shouldDeactivate) {
-          await updateUserStatus(userId, false);
-        }
-      }
+      const createdUserResponse = await createUserByAdmin(payload);
 
       await loadUsers();
       resetCreateUserForm();
 
       toast.success(
-        needsAdditionalUpdate
-          ? "User created and access configured."
-          : "User created successfully.",
+        createdUserResponse?.message ||
+          "User created and credentials email sent successfully",
       );
     } catch (requestError) {
-      const message = getReadableError(requestError, "Unable to create user.");
+      const statusCode = requestError?.response?.status;
+      const backendFieldErrors = getFieldErrors(requestError);
+      setCreateUserFieldErrors(backendFieldErrors);
+
+      let message = getReadableError(requestError, "Unable to create user.");
+
+      if (statusCode === 403) {
+        message = "You do not have permission to create users.";
+      }
+
+      if (message.toLowerCase().includes("email is already registered")) {
+        message = "This email is already registered. Please use another email.";
+      }
+
       setCreateUserError(message);
       toast.error(message);
     } finally {
@@ -696,7 +672,9 @@ export function AdminPage() {
       <section className="panel">
         <div className="panel-head">
           <h3>Create User</h3>
-          <p className="subtle">Add viewer, analyst, or admin from frontend.</p>
+          <p className="subtle">
+            Add viewer or analyst users and trigger credentials email.
+          </p>
         </div>
 
         <form className="admin-user-form" onSubmit={handleCreateUserSubmit}>
@@ -711,6 +689,9 @@ export function AdminPage() {
               maxLength={100}
               required
             />
+            {createUserFieldErrors.name ? (
+              <span className="helper-error">{createUserFieldErrors.name}</span>
+            ) : null}
           </label>
 
           <label className="field">
@@ -722,10 +703,15 @@ export function AdminPage() {
               onChange={handleCreateUserChange}
               required
             />
+            {createUserFieldErrors.email ? (
+              <span className="helper-error">
+                {createUserFieldErrors.email}
+              </span>
+            ) : null}
           </label>
 
           <label className="field">
-            <span className="field-label">Password</span>
+            <span className="field-label">Password (optional)</span>
             <input
               type="password"
               name="password"
@@ -733,8 +719,13 @@ export function AdminPage() {
               onChange={handleCreateUserChange}
               minLength={6}
               maxLength={50}
-              required
+              placeholder="Leave blank to auto-manage credentials"
             />
+            {createUserFieldErrors.password ? (
+              <span className="helper-error">
+                {createUserFieldErrors.password}
+              </span>
+            ) : null}
           </label>
 
           <label className="field">
@@ -744,12 +735,15 @@ export function AdminPage() {
               value={createUserForm.role}
               onChange={handleCreateUserChange}
             >
-              {USER_ROLES.map((role) => (
+              {CREATE_USER_ROLES.map((role) => (
                 <option key={role} value={role}>
                   {formatRole(role)}
                 </option>
               ))}
             </select>
+            {createUserFieldErrors.role ? (
+              <span className="helper-error">{createUserFieldErrors.role}</span>
+            ) : null}
           </label>
 
           <label className="field">
@@ -763,6 +757,11 @@ export function AdminPage() {
               />
               Active user
             </span>
+            {createUserFieldErrors.isActive || createUserFieldErrors.status ? (
+              <span className="helper-error">
+                {createUserFieldErrors.isActive || createUserFieldErrors.status}
+              </span>
+            ) : null}
           </label>
 
           {createUserError ? (

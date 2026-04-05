@@ -28,7 +28,7 @@ export function AppLayout({ children }) {
     <div className="app-shell">
       <header className="topbar">
         <div className="brand-wrap">
-          <div className="brand-mark">ZF</div>
+          <img className="brand-mark" src="/Favicon.png" alt="ZF Logo" />
           <div>
             <h1>Finance Control Desk</h1>
             <p>Connected to live backend APIs</p>

@@ -2,6 +2,11 @@
 
 Production-style React frontend integrated with an existing backend API.
 
+## Temporary login Cred
+
+- Email = jeeshankhan3232@yopmai.com
+- Password = Admin@123
+
 ## Tech Stack
 
 - React + Vite (JavaScript)
