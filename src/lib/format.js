@@ -45,5 +45,12 @@ export function formatRole(role) {
     return "Viewer";
   }
 
-  return `${role.charAt(0).toUpperCase()}${role.slice(1)}`;
+  const normalizedRole = String(role).toLowerCase();
+  const roleAliasMap = {
+    staff: "analyst",
+    user: "viewer",
+  };
+
+  const displayRole = roleAliasMap[normalizedRole] || normalizedRole;
+  return `${displayRole.charAt(0).toUpperCase()}${displayRole.slice(1)}`;
 }

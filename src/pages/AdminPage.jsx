@@ -1,13 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
-import { getReadableError } from "../api/client.js";
+import { getFieldErrors, getReadableError } from "../api/client.js";
 import { AdminRecordsTable } from "../components/admin/AdminRecordsTable.jsx";
+import { AdminUserUpdateModal } from "../components/admin/AdminUserUpdateModal.jsx";
 import { UsersTable } from "../components/admin/UsersTable.jsx";
 import { ErrorState } from "../components/common/ErrorState.jsx";
 import { LoadingState } from "../components/common/LoadingState.jsx";
 import { RecordFormModal } from "../components/records/RecordFormModal.jsx";
+import { useAuth } from "../hooks/useAuth.js";
 import { useToast } from "../hooks/useToast.js";
 import { formatRole } from "../lib/format.js";
 import { registerUser } from "../services/authService.js";
+import { updateAdminProfile } from "../services/adminService.js";
+import { fetchOpenApiJson } from "../services/apiSchemaService.js";
 import {
   createRecord,
   deleteRecord,
@@ -18,6 +22,7 @@ import {
   fetchUsers,
   updateUserRole,
   updateUserStatus,
+  updateUserWithAdminPayload,
 } from "../services/usersService.js";
 
 const USER_ROLES = ["viewer", "analyst", "admin"];
@@ -29,6 +34,14 @@ const CREATE_USER_INITIAL_FORM = {
   role: "viewer",
   isActive: true,
 };
+
+function getInitialProfileForm(user) {
+  return {
+    name: String(user?.name || ""),
+    email: String(user?.email || ""),
+    password: "",
+  };
+}
 
 function getEntityId(entity) {
   return entity?._id || entity?.id;
@@ -47,6 +60,55 @@ function mergeUser(existingUser, incomingUser) {
 
 function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function buildAdminProfilePayload(form, currentUser) {
+  const fieldErrors = {};
+  const payload = {};
+
+  const currentName = String(currentUser?.name || "").trim();
+  const currentEmail = String(currentUser?.email || "")
+    .trim()
+    .toLowerCase();
+
+  const nextName = String(form.name || "").trim();
+  const nextEmail = String(form.email || "")
+    .trim()
+    .toLowerCase();
+  const nextPassword = String(form.password || "");
+
+  if (!nextName) {
+    fieldErrors.name = "Name is required.";
+  } else if (nextName.length < 2 || nextName.length > 100) {
+    fieldErrors.name = "Name must be between 2 and 100 characters.";
+  } else if (nextName !== currentName) {
+    payload.name = nextName;
+  }
+
+  if (!nextEmail) {
+    fieldErrors.email = "Email is required.";
+  } else if (!isValidEmail(nextEmail)) {
+    fieldErrors.email = "Please enter a valid email address.";
+  } else if (nextEmail !== currentEmail) {
+    payload.email = nextEmail;
+  }
+
+  if (nextPassword) {
+    if (nextPassword.length < 6 || nextPassword.length > 50) {
+      fieldErrors.password = "Password must be between 6 and 50 characters.";
+    } else {
+      payload.password = nextPassword;
+    }
+  }
+
+  if (!Object.keys(payload).length && !Object.keys(fieldErrors).length) {
+    fieldErrors.form = "Update at least one field before saving profile.";
+  }
+
+  return {
+    payload,
+    fieldErrors,
+  };
 }
 
 function validateCreateUserForm(form) {
@@ -74,6 +136,7 @@ function validateCreateUserForm(form) {
 }
 
 export function AdminPage() {
+  const { user: currentUser, updateUser } = useAuth();
   const toast = useToast();
 
   const [loading, setLoading] = useState(true);
@@ -85,6 +148,17 @@ export function AdminPage() {
   const [recordModalOpen, setRecordModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
   const [recordSubmitting, setRecordSubmitting] = useState(false);
+  const [profileForm, setProfileForm] = useState(() =>
+    getInitialProfileForm(currentUser),
+  );
+  const [profileFieldErrors, setProfileFieldErrors] = useState({});
+  const [profileError, setProfileError] = useState("");
+  const [profileSubmitting, setProfileSubmitting] = useState(false);
+  const [schemaLoading, setSchemaLoading] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [userUpdateError, setUserUpdateError] = useState("");
+  const [userUpdateFieldErrors, setUserUpdateFieldErrors] = useState({});
+  const [userUpdateSubmitting, setUserUpdateSubmitting] = useState(false);
   const [createUserForm, setCreateUserForm] = useState(
     CREATE_USER_INITIAL_FORM,
   );
@@ -129,6 +203,10 @@ export function AdminPage() {
     loadAdminData();
   }, [loadAdminData]);
 
+  useEffect(() => {
+    setProfileForm(getInitialProfileForm(currentUser));
+  }, [currentUser]);
+
   async function handleRoleChange(userId, role) {
     setPendingUserAction(`role-${userId}`);
 
@@ -146,6 +224,10 @@ export function AdminPage() {
           return mergeUser(user, updatedUser);
         }),
       );
+
+      if (getEntityId(currentUser) === userId) {
+        updateUser(updatedUser);
+      }
 
       toast.success("User role updated.");
     } catch (requestError) {
@@ -173,11 +255,156 @@ export function AdminPage() {
         }),
       );
 
+      if (getEntityId(currentUser) === userId) {
+        updateUser(updatedUser);
+      }
+
       toast.success("User status updated.");
     } catch (requestError) {
       toast.error(getReadableError(requestError, "Unable to update status."));
     } finally {
       setPendingUserAction("");
+    }
+  }
+
+  function handleProfileChange(event) {
+    const { name, value } = event.target;
+
+    setProfileForm((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
+  }
+
+  function resetProfileForm() {
+    setProfileForm(getInitialProfileForm(currentUser));
+    setProfileFieldErrors({});
+    setProfileError("");
+  }
+
+  async function handleProfileSubmit(event) {
+    event.preventDefault();
+
+    const { payload, fieldErrors } = buildAdminProfilePayload(
+      profileForm,
+      currentUser,
+    );
+
+    if (Object.keys(fieldErrors).length) {
+      setProfileFieldErrors(fieldErrors);
+      setProfileError(fieldErrors.form || "");
+      return;
+    }
+
+    setProfileSubmitting(true);
+    setProfileFieldErrors({});
+    setProfileError("");
+
+    try {
+      const updatedUser = await updateAdminProfile(payload);
+
+      if (updatedUser) {
+        updateUser(updatedUser);
+
+        setUsers((prev) =>
+          prev.map((user) => {
+            return getEntityId(user) === getEntityId(updatedUser)
+              ? mergeUser(user, updatedUser)
+              : user;
+          }),
+        );
+
+        setProfileForm({
+          name: updatedUser.name || profileForm.name,
+          email: updatedUser.email || profileForm.email,
+          password: "",
+        });
+      }
+
+      toast.success("Profile updated successfully.");
+    } catch (requestError) {
+      setProfileFieldErrors(getFieldErrors(requestError));
+      const message = getReadableError(
+        requestError,
+        "Unable to update admin profile.",
+      );
+      setProfileError(message);
+      toast.error(message);
+    } finally {
+      setProfileSubmitting(false);
+    }
+  }
+
+  async function handleFetchOpenApiSchema() {
+    setSchemaLoading(true);
+
+    try {
+      const schema = await fetchOpenApiJson();
+      const pathCount = Object.keys(schema?.paths || {}).length;
+      toast.success(
+        pathCount
+          ? `OpenAPI schema loaded (${pathCount} paths).`
+          : "OpenAPI schema loaded successfully.",
+      );
+    } catch (requestError) {
+      toast.error(
+        getReadableError(requestError, "Unable to fetch /swagger.json."),
+      );
+    } finally {
+      setSchemaLoading(false);
+    }
+  }
+
+  function openUserUpdateModal(user) {
+    setEditingUser(user);
+    setUserUpdateError("");
+    setUserUpdateFieldErrors({});
+  }
+
+  function closeUserUpdateModal() {
+    if (userUpdateSubmitting) {
+      return;
+    }
+
+    setEditingUser(null);
+    setUserUpdateError("");
+    setUserUpdateFieldErrors({});
+  }
+
+  async function handleUserUpdateSubmit(payload) {
+    const userId = getEntityId(editingUser);
+    if (!userId) {
+      return;
+    }
+
+    setUserUpdateSubmitting(true);
+    setUserUpdateError("");
+    setUserUpdateFieldErrors({});
+
+    try {
+      const updatedUser = await updateUserWithAdminPayload(userId, payload);
+
+      setUsers((prev) =>
+        prev.map((user) => {
+          return getEntityId(user) === userId
+            ? mergeUser(user, updatedUser)
+            : user;
+        }),
+      );
+
+      if (getEntityId(currentUser) === userId) {
+        updateUser(updatedUser);
+      }
+
+      toast.success("User updated successfully.");
+      closeUserUpdateModal();
+    } catch (requestError) {
+      setUserUpdateFieldErrors(getFieldErrors(requestError));
+      const message = getReadableError(requestError, "Unable to update user.");
+      setUserUpdateError(message);
+      toast.error(message);
+    } finally {
+      setUserUpdateSubmitting(false);
     }
   }
 
@@ -365,13 +592,105 @@ export function AdminPage() {
             Manage users, role access, status, and record CRUD operations.
           </p>
         </div>
-        <button
-          type="button"
-          className="primary-btn"
-          onClick={openCreateRecord}
-        >
-          Create Record
-        </button>
+
+        <div className="actions-row">
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={handleFetchOpenApiSchema}
+            disabled={schemaLoading}
+          >
+            {schemaLoading ? "Loading schema..." : "Fetch API Schema"}
+          </button>
+
+          <button
+            type="button"
+            className="primary-btn"
+            onClick={openCreateRecord}
+          >
+            Create Record
+          </button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h3>Update My Admin Profile</h3>
+          <p className="subtle">Update name, email, and optionally password.</p>
+        </div>
+
+        <form className="admin-user-form" onSubmit={handleProfileSubmit}>
+          <label className="field">
+            <span className="field-label">Name</span>
+            <input
+              type="text"
+              name="name"
+              value={profileForm.name}
+              onChange={handleProfileChange}
+              minLength={2}
+              maxLength={100}
+              required
+            />
+            {profileFieldErrors.name ? (
+              <span className="helper-error">{profileFieldErrors.name}</span>
+            ) : null}
+          </label>
+
+          <label className="field">
+            <span className="field-label">Email</span>
+            <input
+              type="email"
+              name="email"
+              value={profileForm.email}
+              onChange={handleProfileChange}
+              required
+            />
+            {profileFieldErrors.email ? (
+              <span className="helper-error">{profileFieldErrors.email}</span>
+            ) : null}
+          </label>
+
+          <label className="field">
+            <span className="field-label">New Password (optional)</span>
+            <input
+              type="password"
+              name="password"
+              value={profileForm.password}
+              onChange={handleProfileChange}
+              minLength={6}
+              maxLength={50}
+              placeholder="Leave blank to keep existing password"
+            />
+            {profileFieldErrors.password ? (
+              <span className="helper-error">
+                {profileFieldErrors.password}
+              </span>
+            ) : null}
+          </label>
+
+          {profileError ? (
+            <p className="helper-error full-col">{profileError}</p>
+          ) : null}
+
+          <div className="actions-row full-col">
+            <button
+              type="submit"
+              className="primary-btn"
+              disabled={profileSubmitting}
+            >
+              {profileSubmitting ? "Updating..." : "Update Profile"}
+            </button>
+
+            <button
+              type="button"
+              className="muted-btn"
+              onClick={resetProfileForm}
+              disabled={profileSubmitting}
+            >
+              Reset
+            </button>
+          </div>
+        </form>
       </section>
 
       <section className="panel">
@@ -475,6 +794,7 @@ export function AdminPage() {
         pendingAction={pendingUserAction}
         onRoleChange={handleRoleChange}
         onStatusToggle={handleStatusToggle}
+        onEditUser={openUserUpdateModal}
       />
 
       <AdminRecordsTable
@@ -491,6 +811,18 @@ export function AdminPage() {
           isSubmitting={recordSubmitting}
           onCancel={closeRecordModal}
           onSubmit={handleRecordSubmit}
+        />
+      ) : null}
+
+      {editingUser ? (
+        <AdminUserUpdateModal
+          key={getEntityId(editingUser) || "edit-user"}
+          user={editingUser}
+          isSubmitting={userUpdateSubmitting}
+          apiFieldErrors={userUpdateFieldErrors}
+          apiError={userUpdateError}
+          onCancel={closeUserUpdateModal}
+          onSubmit={handleUserUpdateSubmit}
         />
       ) : null}
     </>

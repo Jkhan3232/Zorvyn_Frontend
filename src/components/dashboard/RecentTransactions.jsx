@@ -21,15 +21,15 @@ export function RecentTransactions({ rows }) {
           <tbody>
             {rows.map((row) => (
               <tr key={row.id}>
-                <td>{formatDate(row.date)}</td>
-                <td>{row.category || "Uncategorized"}</td>
-                <td>
+                <td data-label="Date">{formatDate(row.date)}</td>
+                <td data-label="Category">{row.category || "Uncategorized"}</td>
+                <td data-label="Type">
                   <span className={`tag tag-${row.type || "expense"}`}>
                     {row.type || "expense"}
                   </span>
                 </td>
-                <td>{formatCurrency(row.amount)}</td>
-                <td>{row.note || "-"}</td>
+                <td data-label="Amount">{formatCurrency(row.amount)}</td>
+                <td data-label="Note">{row.note || "-"}</td>
               </tr>
             ))}
           </tbody>

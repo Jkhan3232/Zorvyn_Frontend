@@ -11,6 +11,7 @@ export function UsersTable({
   pendingAction,
   onRoleChange,
   onStatusToggle,
+  onEditUser,
 }) {
   return (
     <section className="panel">
@@ -39,9 +40,9 @@ export function UsersTable({
 
               return (
                 <tr key={userId}>
-                  <td>{user.name || "-"}</td>
-                  <td>{user.email || "-"}</td>
-                  <td>
+                  <td data-label="Name">{user.name || "-"}</td>
+                  <td data-label="Email">{user.email || "-"}</td>
+                  <td data-label="Role">
                     <div className="actions-row">
                       <span
                         className={`role-pill role-${user.role || "viewer"}`}
@@ -63,27 +64,38 @@ export function UsersTable({
                       </select>
                     </div>
                   </td>
-                  <td>
+                  <td data-label="Status">
                     <span
                       className={`tag tag-${user.isActive ? "income" : "expense"}`}
                     >
                       {user.isActive ? "Active" : "Inactive"}
                     </span>
                   </td>
-                  <td>{formatDate(user.createdAt)}</td>
-                  <td>
-                    <button
-                      type="button"
-                      className="ghost-btn"
-                      onClick={() => onStatusToggle(userId, !user.isActive)}
-                      disabled={statusPending}
-                    >
-                      {statusPending
-                        ? "Saving..."
-                        : user.isActive
-                          ? "Deactivate"
-                          : "Activate"}
-                    </button>
+                  <td data-label="Joined">{formatDate(user.createdAt)}</td>
+                  <td data-label="Actions">
+                    <div className="actions-row">
+                      <button
+                        type="button"
+                        className="ghost-btn"
+                        onClick={() => onStatusToggle(userId, !user.isActive)}
+                        disabled={statusPending}
+                      >
+                        {statusPending
+                          ? "Saving..."
+                          : user.isActive
+                            ? "Deactivate"
+                            : "Activate"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="muted-btn"
+                        onClick={() => onEditUser(user)}
+                        disabled={rolePending || statusPending}
+                      >
+                        Edit
+                      </button>
+                    </div>
                   </td>
                 </tr>
               );

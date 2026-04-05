@@ -4,7 +4,11 @@ import {
   getStoredAuth,
   setStoredAuth,
 } from "../lib/storage.js";
-import { loginUser, registerUser } from "../services/authService.js";
+import {
+  login as loginRequest,
+  logout as logoutSession,
+  registerUser,
+} from "../services/authService.js";
 import { AuthContext } from "./AuthContextValue.js";
 
 function getInitialAuthState() {
@@ -25,26 +29,60 @@ function normalizeRole(role) {
 export function AuthProvider({ children }) {
   const [authState, setAuthState] = useState(getInitialAuthState);
 
-  const logout = useCallback(() => {
+  const clearAuthState = useCallback(() => {
     clearStoredAuth();
-    setAuthState({ token: "", user: null });
+    setAuthState(getInitialAuthState());
   }, []);
+
+  const logout = useCallback(async () => {
+    const refreshToken = String(getStoredAuth().refreshToken || "").trim();
+
+    try {
+      if (refreshToken) {
+        await logoutSession(refreshToken);
+      }
+    } catch {
+      // Local logout should still succeed even if revoke call fails.
+    } finally {
+      clearAuthState();
+    }
+  }, [clearAuthState]);
 
   useEffect(() => {
     const handleUnauthorized = () => {
-      logout();
+      clearAuthState();
+    };
+
+    const handleTokenRefreshed = (event) => {
+      const nextAccessToken = String(event?.detail?.accessToken || "").trim();
+      if (!nextAccessToken) {
+        return;
+      }
+
+      setAuthState((prev) => {
+        const nextAuthState = {
+          ...prev,
+          token: nextAccessToken,
+          accessToken: nextAccessToken,
+        };
+
+        setStoredAuth(nextAuthState);
+        return nextAuthState;
+      });
     };
 
     window.addEventListener("auth:unauthorized", handleUnauthorized);
+    window.addEventListener("auth:token-refreshed", handleTokenRefreshed);
     return () => {
       window.removeEventListener("auth:unauthorized", handleUnauthorized);
+      window.removeEventListener("auth:token-refreshed", handleTokenRefreshed);
     };
-  }, [logout]);
+  }, [clearAuthState]);
 
   const login = useCallback(async (email, password) => {
-    const auth = await loginUser({ email, password });
+    const auth = await loginRequest({ email, password });
 
-    if (!auth?.token || !auth?.user) {
+    if (!auth?.accessToken || !auth?.refreshToken || !auth?.user) {
       throw new Error("Invalid login response from server.");
     }
 
@@ -57,21 +95,45 @@ export function AuthProvider({ children }) {
     return registerUser(payload);
   }, []);
 
+  const updateUser = useCallback((nextUser) => {
+    if (!nextUser || typeof nextUser !== "object") {
+      return;
+    }
+
+    setAuthState((prev) => {
+      const nextAuthState = {
+        ...prev,
+        user: {
+          ...(prev.user || {}),
+          ...nextUser,
+        },
+      };
+
+      setStoredAuth(nextAuthState);
+      return nextAuthState;
+    });
+  }, []);
+
   const role = normalizeRole(authState.user?.role);
 
   const value = useMemo(
     () => ({
-      token: authState.token,
+      token: authState.accessToken || authState.token,
+      accessToken: authState.accessToken || authState.token,
+      refreshToken: authState.refreshToken,
       user: authState.user,
       role,
-      isAuthenticated: Boolean(authState.token && authState.user),
+      isAuthenticated: Boolean(
+        (authState.accessToken || authState.token) && authState.user,
+      ),
       isAdmin: role === "admin",
       canReadRecords: role === "analyst" || role === "admin",
       login,
       register,
       logout,
+      updateUser,
     }),
-    [authState, role, login, logout, register],
+    [authState, role, login, logout, register, updateUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

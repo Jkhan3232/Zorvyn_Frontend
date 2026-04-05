@@ -81,7 +81,7 @@ export function RecordsFilters({
           />
         </label>
 
-        <div className="actions-row">
+        <div className="actions-row full-col">
           <button type="submit" className="primary-btn">
             Apply
           </button>

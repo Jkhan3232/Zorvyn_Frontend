@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { getReadableError } from "../api/client.js";
+import { getFieldErrors, getReadableError } from "../api/client.js";
 import { useAuth } from "../hooks/useAuth.js";
 import { useToast } from "../hooks/useToast.js";
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -14,19 +16,40 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
 
   async function handleSubmit(event) {
     event.preventDefault();
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const nextFieldErrors = {};
+
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      nextFieldErrors.email = "Please enter a valid email address.";
+    }
+
+    if (!password) {
+      nextFieldErrors.password = "Password is required.";
+    }
+
+    if (Object.keys(nextFieldErrors).length) {
+      setFieldErrors(nextFieldErrors);
+      setError("");
+      return;
+    }
+
     setSubmitting(true);
     setError("");
+    setFieldErrors({});
 
     try {
-      await login(email.trim(), password);
+      await login(normalizedEmail, password);
       toast.success("Login successful.");
 
       const redirectTo = location.state?.from?.pathname || "/dashboard";
       navigate(redirectTo, { replace: true });
     } catch (requestError) {
+      setFieldErrors(getFieldErrors(requestError));
       const message = getReadableError(requestError, "Unable to login now.");
       setError(message);
       toast.error(message);
@@ -49,8 +72,12 @@ export function LoginPage() {
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
+              aria-invalid={Boolean(fieldErrors.email)}
               required
             />
+            {fieldErrors.email ? (
+              <span className="helper-error">{fieldErrors.email}</span>
+            ) : null}
           </label>
 
           <label className="field">
@@ -59,8 +86,12 @@ export function LoginPage() {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              aria-invalid={Boolean(fieldErrors.password)}
               required
             />
+            {fieldErrors.password ? (
+              <span className="helper-error">{fieldErrors.password}</span>
+            ) : null}
           </label>
 
           {error ? <p className="login-error">{error}</p> : null}

@@ -1,19 +1,24 @@
 import { apiClient } from "../api/client.js";
-import { normalizeUsersResponse, unwrapApiData } from "../lib/http.js";
+import { normalizeUsersResponse } from "../lib/http.js";
+import { mapUserFromBackend, updateUserByAdmin } from "./adminService.js";
 
 export async function fetchUsers() {
   const response = await apiClient.get("/users");
-  return normalizeUsersResponse(response.data);
+  const users = normalizeUsersResponse(response.data);
+
+  return users
+    .map((user) => mapUserFromBackend(user))
+    .filter((user) => Boolean(user));
 }
 
 export async function updateUserRole(userId, role) {
-  const response = await apiClient.patch(`/users/${userId}/role`, { role });
-  return unwrapApiData(response.data);
+  return updateUserByAdmin(userId, { role });
 }
 
 export async function updateUserStatus(userId, isActive) {
-  const response = await apiClient.patch(`/users/${userId}/status`, {
-    isActive,
-  });
-  return unwrapApiData(response.data);
+  return updateUserByAdmin(userId, { isActive });
+}
+
+export async function updateUserWithAdminPayload(userId, payload) {
+  return updateUserByAdmin(userId, payload);
 }

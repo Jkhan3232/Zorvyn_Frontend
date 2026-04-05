@@ -50,16 +50,20 @@ export function RecordsTable({ records, sortBy, sortOrder, onSort }) {
           <tbody>
             {records.map((record) => (
               <tr key={getRecordId(record)}>
-                <td>{formatDate(record.date)}</td>
-                <td>{record.category || "Uncategorized"}</td>
-                <td>
+                <td data-label="Date">{formatDate(record.date)}</td>
+                <td data-label="Category">
+                  {record.category || "Uncategorized"}
+                </td>
+                <td data-label="Type">
                   <span className={`tag tag-${record.type || "expense"}`}>
                     {record.type || "expense"}
                   </span>
                 </td>
-                <td>{formatCurrency(record.amount)}</td>
-                <td>{record.note || record.description || "-"}</td>
-                <td>{formatDate(record.createdAt)}</td>
+                <td data-label="Amount">{formatCurrency(record.amount)}</td>
+                <td data-label="Note">
+                  {record.note || record.description || "-"}
+                </td>
+                <td data-label="Created">{formatDate(record.createdAt)}</td>
               </tr>
             ))}
           </tbody>
